@@ -8,13 +8,16 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+// Define Binary pattern here:
+var binary_pattern = regexp.MustCompile(`\.(xls|doc|o|a|zip|rar)$`)
 
 var commit_list []string
 var infile *string = flag.String("f", "", "File contains commit id, one commit one each line")
 var gitdir *string = flag.String("d", "", "Repo path")
-//var job *int = flag.Int("j", "job", "Number of jobs")
 
 func do_commit_check(commit string) {
 	var parents [2]string
@@ -72,7 +75,13 @@ func get_diff_tree(commit1, commit2 string) (string, int) {
 		log.Fatal(err)
 	}
 	diff := strings.TrimSpace(string(out))
-	count := len(strings.Split(diff, "\n"))
+	count := 0
+	for _, item := range strings.Split(diff, "\n") {
+		if binary_pattern.MatchString(item) {
+			continue
+		}
+		count++
+	}
 	return diff, count
 }
 
