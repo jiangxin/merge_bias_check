@@ -10,14 +10,20 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // Define Binary pattern here:
 var binary_pattern = regexp.MustCompile(`\.(xls|doc|o|a|zip|rar)$`)
 
-var commit_list []string
 var infile *string = flag.String("f", "", "File contains commit id, one commit one each line")
 var gitdir *string = flag.String("d", "", "Repo path")
+var job *int = flag.Int("j", 2, "Number of jobs")
+var wg sync.WaitGroup
+var run_queue chan string
+var job_queue chan int
+var result chan string
+var stderr chan string
 
 func do_commit_check(commit string) {
 	var parents [2]string
@@ -34,19 +40,19 @@ func do_commit_check(commit string) {
 			parents[count] = strings.Split(line, " ")[1]
 			count++
 			if count > 2 {
-				fmt.Fprintf(os.Stderr, "Error: %s is a octopus commit\n", commit)
+				stderr <- fmt.Sprintf("Error: %s is a octopus commit\n", commit)
 				return
 			}
 		}
 	}
 	if count < 2 {
-		fmt.Fprintf(os.Stderr, "Error: %s is not a merge commit\n", commit)
+		stderr <- fmt.Sprintf("Error: %s is not a merge commit\n", commit)
 		return
 	}
 
 	out, err = exec.Command("git", "merge-base", parents[0], parents[1]).Output()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Can not find merge-base of %s\n", commit)
+		stderr <- fmt.Sprintf("Error: Can not find merge-base of %s\n", commit)
 		return
 	}
 	merge_base := strings.TrimSpace(string(out))
@@ -66,7 +72,8 @@ func do_commit_check(commit string) {
 		bias = bias2
 	}
 
-	fmt.Printf("%-40s: %d\n", commit, bias)
+	result <- fmt.Sprintf("%-40s: %d\n", commit, bias)
+	<-job_queue
 }
 
 func get_diff_tree(commit1, commit2 string) (string, int) {
@@ -105,7 +112,7 @@ func eval_bias(real_value, expect int) int {
 }
 
 func main() {
-	commit_list = make([]string, 0, 10)
+	commit_list := make([]string, 0, 10)
 
 	flag.Parse()
 
@@ -141,8 +148,52 @@ func main() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "%-40s: %s\n", "COMMIT", "BIAS(less is good)")
-	for _, commit := range commit_list {
-		do_commit_check(commit)
+	if *job < 1 {
+		*job = 1
 	}
+
+	job_queue = make(chan int, *job)
+	run_queue = make(chan string)
+	result = make(chan string)
+	stderr = make(chan string)
+
+	wg.Add(len(commit_list))
+
+	go func() {
+		for out := range stderr {
+			fmt.Fprintf(os.Stderr, out)
+		}
+	}()
+
+	go func() {
+		for out := range result {
+			fmt.Fprintf(os.Stdout, out)
+		}
+	}()
+
+	go func() {
+		for {
+			c, ok := <-run_queue
+			if !ok {
+				break
+			}
+			job_queue <- 1
+			go func(commit string) {
+				do_commit_check(commit)
+				wg.Done()
+			}(c)
+		}
+		close(job_queue)
+	}()
+
+	fmt.Fprintf(os.Stderr, "%-40s: %s\n", "COMMIT", "BIAS(less is good)")
+	fmt.Fprintf(os.Stderr, "--------------------------------------------------\n")
+	for _, commit := range commit_list {
+		run_queue <- commit
+	}
+
+	close(run_queue)
+	wg.Wait()
+	close(result)
+	close(stderr)
 }
