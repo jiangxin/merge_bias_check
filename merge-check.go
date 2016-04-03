@@ -18,7 +18,7 @@ var binary_pattern = regexp.MustCompile(`\.(xls|doc|o|a|zip|rar)$`)
 
 var infile *string = flag.String("f", "", "File contains commit id, one commit one each line")
 var gitdir *string = flag.String("d", "", "Repo path")
-var job *int = flag.Int("j", 2, "Number of jobs")
+var job *int = flag.Int("j", 4, "Number of jobs")
 var wg sync.WaitGroup
 var run_queue chan string
 var job_queue chan int
